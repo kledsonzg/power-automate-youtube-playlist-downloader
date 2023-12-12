@@ -1,0 +1,100 @@
+@@ConnectionString: ''
+@@Type: 'Local'
+@@DesktopType: 'local'
+@@DisplayName: 'Computador local'
+IMPORT 'controlRepo.appmask' AS appmask
+IMPORT 'imageRepo.imgrepo' AS imgrepo
+@SENSITIVE: []
+Display.InputDialog Title: $'''Link da playlist''' Message: $'''Por favor, insira o URL da playlist.''' InputType: Display.InputType.SingleLine IsTopMost: False UserInput=> UserInput ButtonPressed=> ButtonPressed
+IF ButtonPressed = $'''Cancel''' THEN
+    EXIT Code: 0
+END
+CALL 'Get Video Links'
+CALL 'Update Edge Downloads Folder'
+Text.SplitText.SplitWithDelimiter Text: Result CustomDelimiter: $'''\\n''' IsRegEx: True Result=> linksList
+Display.ShowMessageDialog.ShowMessageWithTimeout Title: fixedTitle Message: $'''Foram encontrado(a)(s): %linksList.Count% vídeos na playlist. Prosseguindo para iniciar os downloads...''' Icon: Display.Icon.Information Buttons: Display.Buttons.OK DefaultButton: Display.DefaultButton.Button1 IsTopMost: False Timeout: 3
+CALL 'Download Playlist Songs'
+@@copilotGeneratedAction: 'False'
+Scripting.RunPowershellScript.RunPowershellScript Script: $'''explorer %playlistFolder%'''
+Workstation.PlaySound.PlaySystemSound SystemSound: System.SystemSound.Beep
+FUNCTION 'Get Video Links' GLOBAL
+    WebAutomation.LaunchEdge.LaunchEdge Url: UserInput WindowState: WebAutomation.BrowserWindowState.Maximized ClearCache: False ClearCookies: False WaitForPageToLoadTimeout: 60 Timeout: 60 BrowserInstance=> Browser
+    WebAutomation.GetDetailsOfWebPage BrowserInstance: Browser DetailsType: WebAutomation.DetailsType.Title Details=> title
+    SET title TO $'''\'%title%\''''
+    File.ReadTextFromFile.ReadText File: $'''W:\\Programming\\Power Automate\\youtube playlist\\src\\fix-playlist-title.js''' Encoding: File.TextFileEncoding.UTF8 Content=> script
+    Text.Replace Text: script TextToFind: $'''$title''' IsRegEx: False IgnoreCase: False ReplaceWith: title ActivateEscapeSequences: False Result=> script
+    WebAutomation.ExecuteJavascript BrowserInstance: Browser Javascript: script Result=> fixedTitle
+    File.ReadTextFromFile.ReadText File: $'''W:\\Programming\\Power Automate\\youtube playlist\\src\\get-video-links_v2.js''' Encoding: File.TextFileEncoding.UTF8 Content=> script
+    WebAutomation.ExecuteJavascript BrowserInstance: Browser Javascript: script Result=> Result
+    WebAutomation.CloseWebBrowser BrowserInstance: Browser
+END FUNCTION
+FUNCTION 'Update Edge Downloads Folder' GLOBAL
+    SET playlistFolder TO $'''\'F:\\Users\\kleds\\Downloads\\youtube playlists\\%fixedTitle%\\\''''
+    @@copilotGeneratedAction: 'False'
+Scripting.RunPowershellScript.RunPowershellScript Script: $'''$downloadDirectory = %playlistFolder%
+
+Set-ItemProperty -Path \'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge\' -name \'DownloadDirectory\' -value $downloadDirectory -Type \'String\'''' ScriptOutput=> PowershellOutput
+    # A próxima função encerra qualquer instância do Microsoft Edge para que na próxima vez que o mesmo for aberto novamente, ele irá obter a nova pasta de Downloads.
+    Scripting.RunPowershellScript.RunPowershellScript Script: $'''taskkill /f /t /im msedge.exe'''
+END FUNCTION
+FUNCTION 'Download Playlist Songs' GLOBAL
+    WebAutomation.LaunchEdge.LaunchEdge Url: $'''https://savemp3.net''' WindowState: WebAutomation.BrowserWindowState.Maximized ClearCache: False ClearCookies: False WaitForPageToLoadTimeout: 60 Timeout: 60 BrowserInstance=> Browser
+    WAIT 3
+    WebAutomation.ExecuteJavascript BrowserInstance: Browser Javascript: $'''function ExecuteScript() 
+{ 
+	document.body.focus();
+}'''
+    SET skipInputLooking TO $'''false'''
+    LOOP FOREACH item IN linksList
+        IF skipInputLooking = $'''false''' THEN
+            SET inputExists TO $'''false'''
+            LOOP WHILE (inputExists) = ($'''false''')
+                WAIT 1
+                WebAutomation.ExecuteJavascript BrowserInstance: Browser Javascript: $'''function ExecuteScript() 
+{ 
+    let count = false;
+    try
+    {
+    	count = document.getElementsByClassName(\'search\')[0].childNodes.length;
+    }
+    catch{}
+    
+    return count > 0;
+}''' Result=> inputExists
+            END
+        END
+        SET skipInputLooking TO $'''true'''
+        SET script TO $'''function ExecuteScript() 
+{ 
+    let inputElement = document.getElementsByClassName(\'search\')[0].childNodes[0];
+
+    inputElement.value = \'%item%\';
+    inputElement.dispatchEvent(new Event(\'input\') );
+}'''
+        WebAutomation.ExecuteJavascript BrowserInstance: Browser Javascript: script
+        SET downloadButtonExists TO $'''false'''
+        LOOP WHILE (downloadButtonExists) = ($'''false''')
+            WAIT 1
+            WebAutomation.ExecuteJavascript BrowserInstance: Browser Javascript: $'''function ExecuteScript() 
+{ 
+    return document.getElementsByClassName(\'download-button\').length > 0;
+}''' Result=> downloadButtonExists
+        END
+        WebAutomation.ExecuteJavascript BrowserInstance: Browser Javascript: $'''function ExecuteScript() 
+{ 
+    let downloadElement = document.getElementsByClassName(\'download-button\')[0];
+
+    downloadElement.click();
+}'''
+        SET downloadGenerated TO $'''false'''
+        LOOP WHILE (downloadGenerated) = ($'''false''')
+            WAIT 1
+            WebAutomation.ExecuteJavascript BrowserInstance: Browser Javascript: $'''function ExecuteScript() 
+{ 
+    let downloadElement = document.getElementsByClassName(\'download-button\')[0];
+
+    return downloadElement.classList.contains(\'disabled\');
+}''' Result=> downloadGenerated
+        END
+    END
+END FUNCTION
